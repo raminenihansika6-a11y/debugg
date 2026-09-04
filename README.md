@@ -1,2 +1,2 @@
-# debugg
+# debugg-learning-app
 React Application
