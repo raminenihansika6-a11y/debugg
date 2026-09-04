@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // users/{uid}
+    // Anyone signed in can read profiles (needed for the leaderboard).
+    // A user can only touch their own doc, and can NEVER write the
+    // fields that control their score - those are only ever written
+    // by the submitSolve Cloud Function (which runs with admin
+    // privileges and bypasses these rules entirely).
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.xp == 0
+        && request.resource.data.solved == 0
+        && request.resource.data.streak == 0
+        && request.resource.data.role == "user";
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(["xp", "solved", "streak", "solvedChallenges", "lastSolvedDate", "role", "uid"]);
+    }
+    // challenges
+    // Readable by any signed-in user. Writable only by Cloud Functions
+    // (approveSubmission) - never directly by clients, dev or not.
+    match /challenges/{challengeId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    // submissions
+    // Users can create their own submission and read the queue, but
+    // only the approveSubmission/rejectSubmission Cloud Functions
+    // (gated on the "dev" custom claim) may approve/reject/delete.
+    match /submissions/{submissionId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.status == "pending";
+      allow update, delete: if false;
+    }
+    // posts (Discuss)
+    match /posts/{postId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid;
+      // Only the like/likedBy fields may change after creation, and a
+      // user can only add themselves to likedBy (no un-liking others,
+      // no rewriting post text after the fact).
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["likes", "likedBy"])
+        && request.resource.data.likedBy.hasAll(resource.data.get("likedBy", []))
+        && request.resource.data.likedBy.hasAny([request.auth.uid]);
+      allow delete: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      match /comments/{commentId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null;
+        allow update, delete: if false;
+      }
+    }
+  }
+}
